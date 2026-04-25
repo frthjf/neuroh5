@@ -218,12 +218,27 @@ namespace neuroh5
       // create dataspaces and selections
       hid_t mspace = H5Screate_simple(1, &block, &block);
       throw_assert(mspace >= 0, "error in H5Screate_simple");
-      throw_assert(H5Sselect_all(mspace) >= 0, "error in H5Sselect_all");
-      hid_t fspace = H5Screate_simple(1, &total, &total);
+      if (block > 0)
+        {
+          throw_assert(H5Sselect_all(mspace) >= 0, "error in H5Sselect_all");
+        }
+      else
+        {
+          throw_assert(H5Sselect_none(mspace) >= 0, "error in H5Sselect_none");
+        }
+      hsize_t fdim = (total > 0) ? total : 1;
+      hid_t fspace = H5Screate_simple(1, &fdim, &fdim);
       throw_assert(fspace >= 0, "error in H5Screate_simple");
-      throw_assert(H5Sselect_hyperslab(fspace, H5S_SELECT_SET, &start, NULL,
-                                       &count, &block) >= 0,
-                   "error in H5Sselect_hyperslab");
+      if (block > 0)
+        {
+          throw_assert(H5Sselect_hyperslab(fspace, H5S_SELECT_SET, &start, NULL,
+                                           &count, &block) >= 0,
+                       "error in H5Sselect_hyperslab");
+        }
+      else
+        {
+          throw_assert(H5Sselect_none(fspace) >= 0, "error in H5Sselect_none");
+        }
 
       // figure the type
 
@@ -239,10 +254,23 @@ namespace neuroh5
       throw_assert(H5Pset_create_intermediate_group(lcpl, 1) >= 0, 
                    "error in H5Pset_create_intermediate_group");
 
-      hid_t dset = H5Dcreate(loc, path.c_str(), ftype, fspace,
+      // Create the dataset using a dataspace sized to the total extent so all
+      // ranks agree on the on-disk layout (required for collective create).
+      hsize_t dset_dim = (total > 0) ? total : 0;
+      hid_t dset_space = H5Screate_simple(1, &dset_dim, &dset_dim);
+      throw_assert(dset_space >= 0, "error in H5Screate_simple");
+      hid_t dset = H5Dcreate(loc, path.c_str(), ftype, dset_space,
                              lcpl, H5P_DEFAULT, H5P_DEFAULT);
       throw_assert(dset >= 0, "error in H5Dcreate");
-      throw_assert(H5Dwrite(dset, mtype, mspace, fspace, wapl, &value[0])
+      throw_assert(H5Sclose(dset_space) >= 0, "error in H5Sclose");
+
+      // Pass a valid (non-null) buffer pointer even on ranks with zero-length
+      // selections; HDF5 must still be called collectively, but block == 0
+      // means H5Sselect_none was used above so no bytes are read from it.
+      T sentinel;
+      const void* buf = (block > 0) ? static_cast<const void*>(&value[0])
+                                    : static_cast<const void*>(&sentinel);
+      throw_assert(H5Dwrite(dset, mtype, mspace, fspace, wapl, buf)
                    >= 0, "error in H5Dwrite");
 
       throw_assert(H5Dclose(dset) >= 0, "error in H5Dclose");

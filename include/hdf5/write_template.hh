@@ -74,7 +74,13 @@ namespace neuroh5
                           << " on dataset " << name);
           }
 
-        ierr = H5Dwrite(dset, ntype, mspace, fspace, wapl, &v[0]);
+        // On ranks with len == 0, H5Sselect_none has been used above so HDF5
+        // will not read from the buffer; still pass a valid pointer to avoid
+        // dereferencing an empty std::vector (undefined behavior).
+        T sentinel;
+        const void* buf = (len > 0) ? static_cast<const void*>(&v[0])
+                                    : static_cast<const void*>(&sentinel);
+        ierr = H5Dwrite(dset, ntype, mspace, fspace, wapl, buf);
 	if (ierr < 0)
 	  {
 	    H5Eprint2(H5E_DEFAULT, stdout);
